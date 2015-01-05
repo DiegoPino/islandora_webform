@@ -5,3 +5,5 @@ package = Islandora
 dependencies[] = islandora
 dependencies[] = islandora_basic_collection
 dependencies[] = webform
+files[] = tests/config.test
+files[] = tests/webform_settings.test

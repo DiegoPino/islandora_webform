@@ -1,0 +1,76 @@
+<?php
+
+/**
+ * @file
+ * Attempts to ingest a PDF into a randomly generated PDF collection
+ */
+
+class IslandoraWebformConfigTestCase extends DrupalWebTestCase {
+
+  /**
+   * Get test information.
+   */
+  public static function getInfo() {
+    return array(
+      'name' => 'Islandora Webform Configuration',
+      'description' => 'Tests the islandora webform configuration page',
+      'group' => 'Islandora Webform',
+    );
+  }
+
+  /**
+   * Set up the test environment.
+   */
+  public function setUp() {
+    parent::setUp(array(
+      'islandora',
+      'islandora_webform',
+      'webform',
+    ));
+  }
+
+  /**
+   * Run several tests on the configuration page.
+   */
+  public function testPage() {
+
+    // Create a user with permission to access this page
+    $user = $this->drupalCreateUser(array(
+      'administer site configuration',
+    ));
+    $this->drupalLogin($user);
+
+    // Verify that he can access this page
+    $this->drupalGet('admin/islandora/configure/iw');
+    $this->assertResponse('200', 'Response code is 200 - access permitted');
+
+    // Set the fields to unchecked and verify that it has the correct values after saving
+    $edit = array(
+      'islandora_webform_inject_link' => FALSE,
+      'islandora_webform_link_target_new_page' => FALSE,
+    );
+    $this->drupalPost('admin/islandora/configure/iw', $edit, 'Save configuration');
+    $this->assertText('The configuration options have been saved');
+    $this->assertNoFieldChecked('edit-islandora-webform-inject-link', 'Inject webform link should be checked');
+    $this->assertNoFieldChecked('edit-islandora-webform-link-target-new-page', 'Open webforms in new window link should be checked');
+
+    // Set the fields to checked and verify that it has the correct values after saving
+    $edit = array(
+      'islandora_webform_inject_link' => TRUE,
+      'islandora_webform_link_target_new_page' => TRUE,
+    );
+    $this->drupalPost('admin/islandora/configure/iw', $edit, 'Save configuration');
+    $this->assertText('The configuration options have been saved');
+    $this->assertFieldChecked('edit-islandora-webform-inject-link', 'Inject webform link should now be unchecked');
+    $this->assertFieldChecked('edit-islandora-webform-link-target-new-page', 'Open webforms in new window link should now be unchecked');
+
+    $this->drupalLogout();
+
+
+    // Create a regular authenticated user and verify that they do not have access to this page
+    $this->drupalLogin($this->drupalCreateUser());
+    $this->drupalGet('admin/islandora/configure/iw');
+    $this->assertResponse('403', 'Response code is 403 - access denied for regular authenticated user');
+
+  }
+}

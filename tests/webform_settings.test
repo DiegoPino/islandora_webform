@@ -1,0 +1,171 @@
+<?php
+
+/**
+ * @file
+ * Test the settings page for a webform
+ */
+
+class IslandoraWebformSettingsTestCase extends IslandoraCollectionWebTestCase {
+
+  public $webform = NULL;
+
+  public $user = NULL;
+
+  public $collections = array();
+
+  /**
+   * Get test information.
+   */
+  public static function getInfo() {
+    return array(
+      'name' => 'Islandora Webform Settings',
+      'description' => 'Tests the islandora webform settings page',
+      'group' => 'Islandora Webform',
+    );
+  }
+
+  /**
+   * Set up the test environment.
+   */
+  public function setUp() {
+    parent::setUp(array(
+      'islandora',
+      'islandora_webform',
+      'webform',
+      'islandora_large_image',
+      'islandora_basic_collection',
+      'imagemagick',
+      'devel',
+    ));
+
+    // Create a user with permission to access this page
+    $this->user = $this->drupalCreateUser(array(
+      'view fedora repository objects',
+      'ingest fedora objects',
+      'administer site configuration',
+      'manage object properties',
+      'delete fedora objects and datastreams',
+      'create child collection',
+    ));
+    $this->drupalLogin($this->user);
+
+    variable_set('image_toolkit', 'imagemagick');
+    variable_set('imagemagick_convert', $this->imagemagick_convert);
+
+  }
+
+  /**
+   * Run several tests on the settings page.
+   */
+  public function testPage() {
+
+    $this->createObjects();
+
+    // Verify that he can access this page
+    $this->drupalGet('node/' . $this->webform->nid . '/webform');
+    $this->assertResponse('200', 'Response code is 200 - access permitted');
+    $this->assertRaw(l('Islandora settings', 'node/' . $this->webform->nid . '/webform/islandora'), '');
+
+    $this->drupalGet('node/' . $this->webform->nid . '/webform/islandora');
+    $this->assertResponse('200', 'Response code is 200 - access permitted');
+
+
+
+
+
+    $this->destroyObjects();
+  }
+
+  public function createObjects() {
+    // Create a webform to use for testing
+    $settings = array(
+      'title' => 'Test webform, no components',
+      'type' => 'webform',
+    );
+    $components = array(
+      // Test textfield components.
+      'textfield' => array(
+        'component' => array(
+          'form_key' => 'textfield',
+          'name' => 'Textfield',
+          'type' => 'textfield',
+          'value' => '',
+          'required' => '0',
+          'pid' => '0',
+          'weight' => '-14',
+        ),
+        'sample values' => '',
+        'database values' => array(''),
+        'database default values' => array(''),
+      ),
+    );
+    $cid = 0;
+    foreach ($components as $key => $component_info) {
+      $cid++;
+      $settings['webform']['components'][$cid] = $component_info['component'];
+      $settings['webform']['components'][$cid]['cid'] = $cid;
+      $settings['webform']['components'][$cid]['pid'] = 0;
+    }
+    $this->webform = $this->drupalCreateNode($settings);
+
+
+
+    // Report if access is not permitted.
+    $this->drupalGet('islandora');
+    $root = $this->url;
+    $path = $root . '/manage/overview/ingest';
+    $this->drupalGet($path);
+    $this->assertResponse('200', 'Response code is 200 - access permitted');
+
+
+    // Create two collections, each with one large image object.
+    $collection_settings = array(
+      0 => array(
+        'collection_label' => 'Collection One',
+        'collection_pid' => 'islandora:collection1',
+        'collection_cmodel_pid' => 'islandora:sp_large_image_cmodel',
+        'object_file' => drupal_get_path('module', 'islandora_large_image') . '/tests/fixtures/test.tiff',
+      ),
+      1 => array(
+        'collection_label' => 'Collection Two',
+        'collection_pid' => 'islandora:collection2',
+        'collection_cmodel_pid' => 'islandora:sp_large_image_cmodel',
+        'object_file' => drupal_get_path('module', 'islandora_large_image') . '/tests/fixtures/test.tiff',
+      ),
+    );
+
+    // Create the collections as defined above
+    foreach($collection_settings as $collection_setting) {
+
+      // Create the collection object
+      $this->createTestCollection($collection_setting['collection_label'], $collection_setting['collection_cmodel_pid'], $collection_setting['collection_pid']);
+
+      // Ingest an image object to put into the collection
+      $path = 'islandora/object/' . $collection_setting['collection_pid'] . '/manage/overview/ingest';
+      $edit = array(
+        'files[file]' => $collection_setting['object_file'],
+      );
+      $this->drupalPost($path, $edit, t('Ingest'));
+      $object = $this->getObjectFromPath($this->url);
+
+      // Arrange the collection and object and insert into $this->collections
+      $collection = array(
+        'collection' => $this->getObjectFromPath($collection_setting['collection_pid']),
+        'objects' => array(
+          $object,
+        ),
+
+      );
+      $this->collections[] = $collection;
+    }
+  }
+
+  public function destroyObjects() {
+    foreach($this->collections as $collection) {
+      foreach($collection['objects'] as $object) {
+        $this->deleteObject($object->id);
+      }
+      $this->deleteTestCollection($collection['collection']->id);
+    }
+  }
+}
