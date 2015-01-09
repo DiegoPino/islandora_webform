@@ -213,6 +213,16 @@ function iwi_get_ingestion_info($sid) {
     ->fetchAll();
 }
 
+/**
+ * A webform component is being saved, save its islandora ingest mapping.
+ *
+ * @param array $form
+ *   the component edit form
+ * @param array $form_state
+ *   the form_state
+ *
+ * @throws \Exception
+ */
 function iwi_save_component_mapping($form, $form_state) {
 
   $nid = $form['nid']['#value'];
@@ -251,6 +261,17 @@ function iwi_save_component_mapping($form, $form_state) {
 
 }
 
+/**
+ * Retrieve islandora ingest mapping for a given webform component
+ *
+ * @param int $webform_nid
+ *   The node id of the webform
+ * @param int $cid
+ *   The component id
+ *
+ * @return mixed
+ *   the component mapping data as an array
+ */
 function iwi_get_saved_component_mapping($webform_nid, $cid) {
   $data = db_select('islandora_webform_ingest_map', 'm')
     ->fields('m', array('data'))
@@ -260,6 +281,16 @@ function iwi_get_saved_component_mapping($webform_nid, $cid) {
   return @unserialize($data);
 }
 
+/**
+ * Retrieve all islandora ingest mappings for a given webform
+ *
+ * @param int $webform_nid
+ *   the node id of the webform
+ *
+ * @return mixed
+ *   an array with one row per component,
+ *   each row as an array of component mapping data
+ */
 function iwi_get_saved_component_mappings($webform_nid) {
   $results = db_select('islandora_webform_ingest_map', 'm')
     ->fields('m', array('cid', 'data'))
@@ -271,6 +302,15 @@ function iwi_get_saved_component_mappings($webform_nid) {
   return $results;
 }
 
+/**
+ * Retrieve the content_model filter for a webform.
+ *
+ * @param int $webform_nid
+ *   the node id of the webform
+ *
+ * @return string
+ *   the cmodel filter value, or NULL
+ */
 function iwi_webform_content_model($webform_nid) {
   return db_select('islandora_webform_webforms', 'iw')
     ->fields('iw', array('cmodel_filter'))
@@ -305,7 +345,8 @@ function iwi_set_form_element_byhash(&$form, &$form_state, &$cloned_elements, $e
   $parents = explode($delimiter, $elementspath);
   // XML forms have two special form elements, whose children need to be cloned:
   // if #type in (tags,tabs) and $mode=='append'
-  // So we are going to check for those types before deciding how to handle appends.
+  // So we are going to check for those types before deciding how
+  // to handle appends.
 
   $special_xmlform_elements = array('tags' => 'tag', 'tabs' => 'tabpanel');
 
@@ -325,6 +366,7 @@ function iwi_set_form_element_byhash(&$form, &$form_state, &$cloned_elements, $e
       $level = 0;
       $special_element_ref = array();
       $previous_partial_path = array();
+      $key_exists = NULL;
       foreach ($parents as $parent) {
         if (is_array($ref) && array_key_exists($parent, $ref)) {
           $key_exists = TRUE;
@@ -365,7 +407,6 @@ function iwi_set_form_element_byhash(&$form, &$form_state, &$cloned_elements, $e
       if (($key_exists && !empty($target_element_hash)) && (!empty($child_element_hash))) {
         // OK, we got something to clone, let's do it using the objective_
         // form_api:
-        //@TODO ask Patrick: if we got no previous values at all for this perticular element, appending means 'replace'?
         $element = $form_state['storage']['objective_form_storage']['root']->findElement($target_element_hash);
         if ($element) {
           switch ($special_element_child_type) {
@@ -375,15 +416,12 @@ function iwi_set_form_element_byhash(&$form, &$form_state, &$cloned_elements, $e
                 if (!array_key_exists($child_element_hash, $cloned_elements)) {
                   // If not already cloned clone it.
                   $new_tab = clone $tab;
-                  // @codingStandardsIgnoreStart
-                  $setElementProps = function ($element) {
+
+                  $set_element_properties = function ($element) {
                     $element->default_value = NULL;
                   };
-                  // @codingStandardsIgnoreEnd
-
                   // Set element properties on the descendants.
-                  // TODO: 'eachDecendant' is not a method in the 'Form' class; check with Diego
-                  $new_tab->eachDecendant($setElementProps);
+                  $new_tab->eachDecendant($set_element_properties);
 
                   $element->adopt($new_tab);
                   $new_tab_drupal = $new_tab->toArray();
@@ -413,18 +451,14 @@ function iwi_set_form_element_byhash(&$form, &$form_state, &$cloned_elements, $e
                 }
               }
               break;
-            case "tag" :
-              //@TODO ask Patrick: if we got no previous values at all for this perticular element, appending means 'replace'?
+
+            case "tag":
               // Now appending at the end. This means the new value is
               // "themed" like a tag. Should, in case of having no previous
               // value, just add the value to the existing input ?([0])
               // ..it's like replacing...
-              // TODO: Still missing a bit. If i add a new value, all new values are
-              // the last appended one when using ajax later? Fixit tomorrow.
               $form_children = element_children($special_element_ref);
               $input_field = &$special_element_ref[array_shift($form_children)];
-              // Get Input Value as its not stored in the object form.
-              $default_value = $input_field['#default_value'];
               $input_field['#value'] = '';
               $element_children = array_values($element->children);
               $input = array_shift($element_children);
@@ -444,34 +478,14 @@ function iwi_set_form_element_byhash(&$form, &$form_state, &$cloned_elements, $e
 
     default:
       // We are going to replace existing value.
-      //@TODO ask Patrick. In case of multivalues fields. Replace means wiping out every child element of tabs or tags? The thing about replacing in multivalued fields is that we don't know which one to replace. [0]...[n]?
-      //If we got only one, it's easy(two lines?), just put our values there.
+      // If we got only one, just put our values there.
       $key_exists = NULL;
-      $target_element_hash = drupal_array_set_nested_value($new_tab_drupal, array_merge($parents, array('#hash')), $key_exists);
+      $target_element_hash = drupal_array_get_nested_value($form, array_merge($parents, array('#hash')), $key_exists);
       if ($key_exists) {
-        drupal_array_set_nested_value($new_tab_drupal, array_merge($parents, array('#attributes')), $input_value['#attributes']);
-        drupal_array_set_nested_value($new_tab_drupal, array_merge($parents, array('#default_value')), $input_value['#default_value']);
+        drupal_array_set_nested_value($form, array_merge($parents, array('#attributes')), $input_value['#attributes']);
+        drupal_array_set_nested_value($form, array_merge($parents, array('#default_value')), $input_value['#default_value']);
         $element = $form_state['storage']['objective_form_storage']['root']->findElement($target_element_hash);
         $element->default_value = $input_value['#default_value'];
-        // Done.
       }
   }
-
-
-}
-
-function arrayCopy(array $array) {
-  $result = array();
-  foreach ($array as $key => $val) {
-    if (is_array($val)) {
-      $result[$key] = arrayCopy($val);
-    }
-    elseif (is_object($val)) {
-      $result[$key] = clone $val;
-    }
-    else {
-      $result[$key] = $val;
-    }
-  }
-  return $result;
 }
