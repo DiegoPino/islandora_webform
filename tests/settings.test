@@ -131,15 +131,14 @@ class IslandoraWebformSettingsTestCase extends IslandoraCollectionWebTestCase {
         if (isset($collection['objects'][0])) {
           $path = 'islandora/object/' . $collection['objects'][0]->id;
           $this->drupalGet($path);
-          if ($filter_scenario['form_edit']['islandora[scope]'] = 'tagged') {
+          if ($edit['islandora[scope]'] = 'tagged') {
 
             // Verify that there is no webform link currently.
-            $this->assertNoLink($filter_scenario['form_edit']['islandora[link_text]'], 0, 'Webform link should not appear');
+            $this->assertNoLink($edit['islandora[link_text]'], 0, 'Webform link should not appear');
             $this->drupalPostAJAX(NULL, array(), 'add webform link: "' . $this->webform->title . '"');
-            $this->assertLink($filter_scenario['form_edit']['islandora[link_text]'], 0, 'Webform link should have been added');
+            $this->assertLink($edit['islandora[link_text]'], 0, 'Webform link should have been added');
             $this->drupalPostAJAX(NULL, array(), '<- remove this link', 0);
-            $this->assertNoLink($filter_scenario['form_edit']['islandora[link_text]'], 0, 'Webform link should have been removed');
-
+            $this->assertNoLink($edit['islandora[link_text]'], 0, 'Webform link should have been removed');
 
           }
           else {
