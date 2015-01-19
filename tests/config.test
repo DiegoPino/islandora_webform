@@ -46,23 +46,19 @@ class IslandoraWebformConfigTestCase extends DrupalWebTestCase {
 
     // Set the fields to unchecked and verify that it has the correct values after saving
     $edit = array(
-      'islandora_webform_inject_link' => FALSE,
-      'islandora_webform_link_target_new_page' => FALSE,
+      'islandora_webform_link_target' => 'same',
     );
     $this->drupalPost('admin/islandora/configure/iw', $edit, 'Save configuration');
     $this->assertText('The configuration options have been saved');
-    $this->assertNoFieldChecked('edit-islandora-webform-inject-link', 'Inject webform link should be checked');
-    $this->assertNoFieldChecked('edit-islandora-webform-link-target-new-page', 'Open webforms in new window link should be checked');
+    $this->assertOptionSelected('edit-islandora-webform-link-target', 'same', 'Webform link behavior set to: same');
 
     // Set the fields to checked and verify that it has the correct values after saving
     $edit = array(
-      'islandora_webform_inject_link' => TRUE,
-      'islandora_webform_link_target_new_page' => TRUE,
+      'islandora_webform_link_target' => 'new',
     );
     $this->drupalPost('admin/islandora/configure/iw', $edit, 'Save configuration');
     $this->assertText('The configuration options have been saved');
-    $this->assertFieldChecked('edit-islandora-webform-inject-link', 'Inject webform link should now be unchecked');
-    $this->assertFieldChecked('edit-islandora-webform-link-target-new-page', 'Open webforms in new window link should now be unchecked');
+    $this->assertOptionSelected('edit-islandora-webform-link-target', 'new', 'Webform link behavior set to: new');
 
     $this->drupalLogout();
 
