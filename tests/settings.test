@@ -4,6 +4,7 @@
  * @file
  * Test the settings page for a webform
  */
+
 class IslandoraWebformSettingsTestCase extends IslandoraCollectionWebTestCase {
 
   public $webform = NULL;
@@ -72,10 +73,10 @@ class IslandoraWebformSettingsTestCase extends IslandoraCollectionWebTestCase {
     $filter_scenarios = array(
       'cmodel_manual' => array(
         'form_edit' => array(
-          'cmodel_filter' => 'islandora:sp_large_image_cmodel',
-          'scope' => 'tagged',
-          'link_text' => t('CModel Manual Webform Link'),
-          'link_help' => t('Some help text'),
+          'islandora[cmodel_filter]' => 'islandora:sp_large_image_cmodel',
+          'islandora[scope]' => 'tagged',
+          'islandora[link_text]' => t('CModel Manual Webform Link'),
+          'islandora[link_help]' => t('Some help text'),
         ),
         'test_against' => array(
           $this->collections[0],
@@ -83,10 +84,10 @@ class IslandoraWebformSettingsTestCase extends IslandoraCollectionWebTestCase {
       ),
       'cmodel' => array(
         'form_edit' => array(
-          'edit-cmodel-filter' => 'islandora:sp_large_image_cmodel',
-          'edit-scope' => 'all',
-          'edit-link-text' => t('CModel Webform Link'),
-          'edit-link-help' => t('Some help text'),
+          'islandora[cmodel_filter]' => 'islandora:sp_large_image_cmodel',
+          'islandora[scope]' => 'all',
+          'islandora[link_text]' => t('CModel Webform Link'),
+          'islandora[link_help]' => t('Some help text'),
         ),
         'test_against' => array(
           $this->collections[0],
@@ -94,10 +95,10 @@ class IslandoraWebformSettingsTestCase extends IslandoraCollectionWebTestCase {
       ),
       'collection' => array(
         'form_edit' => array(
-          'edit-collection-filter' => 'islandora:collection1',
-          'edit-scope' => 'all',
-          'edit-link-text' => t('Collection 1 Webform Link'),
-          'edit-link-help' => t('Some help text'),
+          'islandora[collection_filter]' => 'islandora:collection1',
+          'islandora[scope]' => 'all',
+          'islandora[link_text]' => t('Collection 1 Webform Link'),
+          'islandora[link_help]' => t('Some help text'),
         ),
         'test_against' => array(
           $this->collections[0],
@@ -105,10 +106,10 @@ class IslandoraWebformSettingsTestCase extends IslandoraCollectionWebTestCase {
       ),
       'search_pid' => array(
         'form_edit' => array(
-          'edit-pid-filter' => 'islandora:*+',
-          'edit-scope' => 'all',
-          'edit-link-text' => t('Numeric PID Webform Link'),
-          'edit-link-help' => t('Some help text'),
+          'islandora[pid_filter]' => 'islandora:*+',
+          'islandora[scope]' => 'all',
+          'islandora[link_text]' => t('Numeric PID Webform Link'),
+          'islandora[link_help]' => t('Some help text'),
         ),
         'test_against' => array(
           $this->collections[0],
@@ -121,7 +122,7 @@ class IslandoraWebformSettingsTestCase extends IslandoraCollectionWebTestCase {
 
       // Apply these settings.
       $edit = array(
-        'edit-enabled' => 1,
+        'islandora[enabled]' => 1,
       );
       $edit = array_merge($edit, $filter_scenario['form_edit']);
       $this->drupalPost('node/' . $this->webform->nid . '/webform/islandora', $edit, 'Save configuration');
@@ -130,20 +131,19 @@ class IslandoraWebformSettingsTestCase extends IslandoraCollectionWebTestCase {
         if (isset($collection['objects'][0])) {
           $path = 'islandora/object/' . $collection['objects'][0]->id;
           $this->drupalGet($path);
-          if ($filter_scenario['form_edit']['edit-scope'] = 'tagged') {
+          if ($filter_scenario['form_edit']['islandora[scope]'] = 'tagged') {
 
             // Verify that there is no webform link currently.
-            $this->assertNoLink($filter_scenario['form_edit']['edit-link-text'], 0, 'Webform link should not appear');
-//            $this->clickLink('add webform link: "' . $this->webform->title . '"');
+            $this->assertNoLink($filter_scenario['form_edit']['islandora[link_text]'], 0, 'Webform link should not appear');
             $this->drupalPostAJAX(NULL, array(), 'add webform link: "' . $this->webform->title . '"');
-            $this->assertLink($filter_scenario['form_edit']['edit-link-text'], 0, 'Webform link should have been added');
+            $this->assertLink($filter_scenario['form_edit']['islandora[link_text]'], 0, 'Webform link should have been added');
             $this->drupalPostAJAX(NULL, array(), '<- remove this link', 0);
-            $this->assertNoLink($filter_scenario['form_edit']['edit-link-text'], 0, 'Webform link should have been removed');
+            $this->assertNoLink($filter_scenario['form_edit']['islandora[link_text]'], 0, 'Webform link should have been removed');
 
 
           }
           else {
-            $this->assertLink($filter_scenario['form_edit']['edit-link-text'], 0, 'Webform link should appear');
+            $this->assertLink($filter_scenario['form_edit']['islandora[link-text'], 0, 'Webform link should appear');
           }
         }
       }
@@ -225,7 +225,7 @@ class IslandoraWebformSettingsTestCase extends IslandoraCollectionWebTestCase {
         'files[file]' => $collection_setting['object_file'],
       );
       $this->drupalPost($path, $edit, t('Ingest'));
-      $object = $this->getObjectFromPath('/islandora/object/' . $this->url);
+      $object = $this->getObjectFromPath($this->url);
 
       // Arrange the collection and object and insert into $this->collections.
       $collection = array(
