@@ -14,41 +14,37 @@
  * @return array
  *   An array of the ingestable datastream objects
  */
-function iwi_ingestable_datastreams(IslandoraFedoraObject $object, $mimetypes = array('text/plain')) {
+function iwi_ingestable_datastreams(FedoraObject $object, $mimetypes = array('text/plain')) {
 
   if (!empty($object['DS-COMPOSITE-MODEL'])) {
 
     module_load_include('inc', 'xml_form_builder', 'includes/associations');
     module_load_include('inc', 'islandora_webform_ingest', '/includes/xml');
 
-    $info = array(
-      'xsl' => drupal_get_path('module', 'islandora_webform_ingest') . '/includes/cmdatastreams.xsl',
-      'input' => $object['DS-COMPOSITE-MODEL']->content,
-    );
-
-    // Run the xslt transform on the 'DS-COMPOSITE-MODEL' xml to get a list of
-    // the datastreams that this content model uses.
-    $datastreams = (array) json_decode(islandora_webform_run_xsl_transform($info));
 
     $mimetypes = (array) $mimetypes;
     $results = array();
 
-    // Build the list of ingestable datastreams. If datastream is text/xml,
-    // ingestability depends on existance of form associations. There can be
-    // more than one.
-    foreach ($datastreams as $ds => $dsmime) {
-
-      // Datastream IDs can have zero, one or many form associations. Add these
-      // to the list first.
-      $associations = xml_form_builder_get_associations(array(), array($object->id), array($ds));
-      if (count($associations) > 0) {
-        foreach ($associations as $association) {
-          $association['mime'] = $dsmime;
-          // Uniquely identify by dsid and form name.
-          $results[$ds . ' (' . $association['form_name'] . ')'] = $association;
-        }
+    // First, get the xml form associations and put them into the select list.
+    $associations = xml_form_builder_get_associations(array(), array($object->id));
+    if (count($associations) > 0) {
+      foreach ($associations as $association) {
+        $association['mime'] = 'text/xml';
+        // Uniquely identify by dsid and form name.
+        $results[$association['dsid'] . ' (' . $association['form_name'] . ')'] = $association;
       }
+    }
 
+    // Now get other datastreams and decide whether or not to add them also.
+    // Run the xslt transform on the 'DS-COMPOSITE-MODEL' xml to get a list of
+    // the datastreams that this content model uses.
+    $info = array(
+      'xsl' => drupal_get_path('module', 'islandora_webform_ingest') . '/includes/cmdatastreams.xsl',
+      'input' => $object['DS-COMPOSITE-MODEL']->content,
+    );
+    $datastreams = (array) json_decode(islandora_webform_run_xsl_transform($info));
+
+    foreach ($datastreams as $ds => $dsmime) {
       // Add ingestable datastreams from other mimetypes (e.g. text/plain)
       foreach ($mimetypes as $type) {
         if (strpos($dsmime, $type) !== FALSE) {
@@ -76,9 +72,10 @@ function iwi_ingestable_datastreams(IslandoraFedoraObject $object, $mimetypes = 
  */
 function iwi_datastream_mime_from_component_type($component_type) {
   $map = array(
+    'datepicker' => array('text/plain'),
     'date' => array('text/plain'),
     'email' => array('text/plain'),
-    'file' => array('image/jpeg', 'application/pdf'),
+    'file' => array('image/jpg', 'application/pdf'),
     'hidden' => array('text/plain'),
     'number' => array('text/plain'),
     'select' => array('text/plain'),
@@ -90,6 +87,22 @@ function iwi_datastream_mime_from_component_type($component_type) {
   return isset($map[$component_type]) ? $map[$component_type] : array();
 }
 
+/**
+ * Get a list of mimetypes for datastreams that we can target for ingestion.
+ *
+ * @param array $filter
+ *   a list of mimetypes that we want to exclude, defaults to none
+ * @return array
+ *   a list of ingestable mimetypes
+ */
+function iwi_ingestable_mimetypes($filter = array()) {
+  $mimetypes = array(
+    'text/plain',
+    'image/jpg',
+    'application/pdf',
+  );
+  return array_diff($mimetypes, $filter);
+}
 
 /**
  * Utility function takes a form array and returns a list of fields and field
@@ -471,8 +484,25 @@ function iwi_set_form_element_byhash(&$form, &$form_state, &$cloned_elements, $e
               $special_element_ref[] = $new_tag_drupal;
               break;
 
+            default:
+              break;
           }
         }
+      }
+      else {
+        // We are going to text-append existing value.
+        $key_exists = NULL;
+        $target_element_hash = drupal_array_get_nested_value($form, array_merge($parents, array('#hash')), $key_exists);
+        if ($key_exists) {
+          drupal_array_set_nested_value($form, array_merge($parents, array('#attributes')), $input_value['#attributes']);
+          drupal_array_set_nested_value($form, array_merge($parents, array('#default_value')), $input_value['#default_value']);
+          $element = $form_state['storage']['objective_form_storage']['root']->findElement($target_element_hash);
+          if (!empty($element->default_value)) {
+            $input_value['#default_value'] = "; " . $input_value['#default_value'];
+          }
+          $element->default_value = $input_value['#default_value'];
+        }
+
       }
       break;
 
