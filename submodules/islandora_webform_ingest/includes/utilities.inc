@@ -3,7 +3,12 @@
 /**
  * Get a list of datastream identifiers that can be ingested for this object.
  *
- * @param IslandoraFedoraObject $object
+ * This function gets used in two contexts:
+ * 1 - On the component mapping configuration form, where mimetype filtering is
+ *     needed.
+ * 2 - On the ingest submission page, where mimetype filtering is unnecessary.
+ *
+ * @param FedoraObject $object
  *   the object
  * @param array $mimetypes
  *   Used to filter datastreams by mimetype:
@@ -12,9 +17,9 @@
  *   If array, filter mimetype by strings in the array
  *
  * @return array
- *   An array of the ingestable datastream objects
+ *   An array of the ingestible datastream objects
  */
-function iwi_ingestable_datastreams(FedoraObject $object, $mimetypes = array('text/plain')) {
+function iwi_ingestible_datastreams(FedoraObject $object, $mimetypes = array('text/plain')) {
 
   if (!empty($object['DS-COMPOSITE-MODEL'])) {
 
@@ -22,16 +27,25 @@ function iwi_ingestable_datastreams(FedoraObject $object, $mimetypes = array('te
     module_load_include('inc', 'islandora_webform_ingest', '/includes/xml');
 
 
-    $mimetypes = (array) $mimetypes;
+    $mimetypes = $mimetypes ? (array) $mimetypes : $mimetypes;
     $results = array();
 
-    // First, get the xml form associations and put them into the select list.
-    $associations = xml_form_builder_get_associations(array(), array($object->id));
-    if (count($associations) > 0) {
-      foreach ($associations as $association) {
-        $association['mime'] = 'text/xml';
-        // Uniquely identify by dsid and form name.
-        $results[$association['dsid'] . ' (' . $association['form_name'] . ')'] = $association;
+    // Array for keeping track of which DSIDs we have already.
+    $ingestible_dsids = array();
+
+    // First, get available xml forms.
+    // Xml forms can only accept text content.
+    // If $mimetypes includes "text/plain", we can use xml forms.
+    if (!$mimetypes || in_array('text/plain', $mimetypes)) {
+      // Get the xml form associations and put them into the select list.
+      $associations = xml_form_builder_get_associations(array(), array($object->id));
+      if (count($associations) > 0) {
+        foreach ($associations as $association) {
+          $association['mime'] = 'text/xml';
+          // Uniquely identify by dsid and form name.
+          $results[$association['dsid'] . ' (' . $association['form_name'] . ')'] = $association;
+          $ingestible_dsids[$association['dsid']] = $association['dsid'];
+        }
       }
     }
 
@@ -45,14 +59,29 @@ function iwi_ingestable_datastreams(FedoraObject $object, $mimetypes = array('te
     $datastreams = (array) json_decode(islandora_webform_run_xsl_transform($info));
 
     foreach ($datastreams as $ds => $dsmime) {
-      // Add ingestable datastreams from other mimetypes (e.g. text/plain)
-      foreach ($mimetypes as $type) {
-        if (strpos($dsmime, $type) !== FALSE) {
+      if (empty($ingestible_dsids[$ds])) {
+        // Add ingestible datastreams from other mimetypes (e.g. text/plain)
+        // If filtering by mimetype, only add datastreams that match a filter.
+        if ($mimetypes) {
+          foreach ($mimetypes as $type) {
+            if (strpos($dsmime, $type) !== FALSE) {
+              $results[$ds . ' (' . $dsmime . ')'] = array(
+                'dsid' => $ds,
+                'mime' => $dsmime,
+              );
+              $ingestible_dsids[$ds] = $ds;
+            }
+            // Only map the datastream once!
+            break;
+          }
+        }
+        // We aren't filtering mimetype, just add the datastream to the results.
+        else {
           $results[$ds . ' (' . $dsmime . ')'] = array(
             'dsid' => $ds,
             'mime' => $dsmime,
           );
-          break;
+          $ingestible_dsids[$ds] = $ds;
         }
       }
     }
@@ -64,18 +93,25 @@ function iwi_ingestable_datastreams(FedoraObject $object, $mimetypes = array('te
 /**
  * Find eligible datastream mimetypes for a given component type.
  *
- * @param string $component_type
- *   the webform component field type
+ * @param array $component
+ *   the webform component
  *
  * @return array
- *   an array of mimetypes that this componet could be mapped to
+ *   an array of mimetypes that this component could be mapped to
  */
-function iwi_datastream_mime_from_component_type($component_type) {
+function iwi_datastream_mime_from_component($component) {
+
+  // File components.
+  $types = iwi_file_extensions_from_component($component);
+  if (count($types)) {
+    return iwi_get_mimetypes_from_extensions($types);
+  }
+
+  // For other component types, just use this hard-coded mapping.
   $map = array(
     'datepicker' => array('text/plain'),
     'date' => array('text/plain'),
     'email' => array('text/plain'),
-    'file' => array('image/jpg', 'application/pdf'),
     'hidden' => array('text/plain'),
     'number' => array('text/plain'),
     'select' => array('text/plain'),
@@ -84,33 +120,41 @@ function iwi_datastream_mime_from_component_type($component_type) {
     'time' => array('text/plain'),
     'tag' => array('text/plain'),
   );
-  return isset($map[$component_type]) ? $map[$component_type] : array();
+  return isset($map[$component['type']]) ? $map[$component['type']] : array('application/octet-stream');
 }
 
 /**
- * Get a list of mimetypes for datastreams that we can target for ingestion.
+ * Utility function to get file extension filters defined for file component.
  *
- * @param array $filter
- *   a list of mimetypes that we want to exclude, defaults to none
+ * @param array $component
+ *   a webform component
+ *
  * @return array
- *   a list of ingestable mimetypes
+ *   an array of file extensions which may be empty
  */
-function iwi_ingestable_mimetypes($filter = array()) {
-  $mimetypes = array(
-    'text/plain',
-    'image/jpg',
-    'application/pdf',
-  );
-  return array_diff($mimetypes, $filter);
+function iwi_file_extensions_from_component($component) {
+  $types = array();
+  if (!empty($component['extra']['filtering']['addextensions'])) {
+    $types = array_map('trim', explode(',', $component['extra']['filtering']['addextensions']));
+  }
+  if (!empty($component['extra']['filtering']['types'])) {
+    $types = array_merge($types, $component['extra']['filtering']['types']);
+  }
+
+  return $types;
 }
 
 /**
- * Utility function takes a form array and returns a list of fields and field
- * types that we support ingesting to. Fieldsets are returned as arrays of
- * fields recursively.
+ * Convert form array and into a list of ingestible fields and field types.
+ *
+ * Fieldsets are returned as arrays of fields recursively.
  *
  * @param array $input_form
+ *   a drupal form
+ *
  * @return array|bool
+ *   List of ingestible fields. Fieldsets are returned as arrays of
+ *   fields recursively
  */
 function iwi_recursive_form_parsing(array $input_form) {
 
@@ -130,7 +174,7 @@ function iwi_recursive_form_parsing(array $input_form) {
     // Skip value and hidden elements, since they are not rendered.
     if (isset($child['#type']) && in_array($child['#type'], array(
         'value',
-        'hidden'
+        'hidden',
       ))
     ) {
       continue;
@@ -160,10 +204,13 @@ function iwi_recursive_form_parsing(array $input_form) {
 }
 
 /**
- * Get an array of field paths for a given form
+ * Get an array of field paths for a given form.
  *
- * @param $form
+ * @param array $form
+ *   form
+ *
  * @return array
+ *   a list of field paths
  */
 function iwi_form_field_paths($form) {
   $data = iwi_recursive_form_parsing($form);
@@ -176,17 +223,16 @@ function iwi_form_field_paths($form) {
 }
 
 /**
- * Recursive function builds field paths for nested fields from form data
+ * Recursive function builds field paths for nested fields from form data.
  *
- * @param $pathstack
- *  An array passed by reference used to hold the working path stack
- *  --
- * @param $paths
- *  - An array passed by reference that is populated with the paths
- * @param $data
- *  - The form data
+ * @param array $pathstack
+ *   An array passed by reference used to hold the working path stack
+ * @param array $paths
+ *   An array passed by reference that is populated with the paths
+ * @param array $data
+ *   The form data
  * @param string $delimiter
- *  - What we're inserting in between field names in the path
+ *   What we're inserting in between field names in the path
  */
 function iwi_path_stack(&$pathstack, &$paths, $data, $delimiter = ':') {
   foreach ($data as $rowname => $rowdata) {
@@ -195,7 +241,7 @@ function iwi_path_stack(&$pathstack, &$paths, $data, $delimiter = ':') {
       iwi_path_stack($pathstack, $paths, $rowdata, $delimiter);
     }
     else {
-      $mimes = iwi_datastream_mime_from_component_type($rowdata);
+      $mimes = iwi_datastream_mime_from_component(array('type' => $rowdata));
       if (count($mimes)) {
         $paths[] = array(
           'field path' => implode($delimiter, $pathstack),
@@ -208,15 +254,14 @@ function iwi_path_stack(&$pathstack, &$paths, $data, $delimiter = ':') {
 }
 
 /**
- * Utility function which gets the islandora_webform_ingestion records for a
- * given webform submission.
+ * Get the islandora_webform_ingestion records for a submission.
  *
- * @param $sid
- *  The webform submission id
+ * @param int $sid
+ *   The webform submission id
  *
  * @return mixed
- *  An array of one or more standard objects representing individual database rows
- *  or NULL for no result.
+ *   An array of one or more standard objects representing individual
+ *   database rows or NULL for no result.
  */
 function iwi_get_ingestion_info($sid) {
   return db_select('islandora_webform_ingestions', 'i')
@@ -275,7 +320,7 @@ function iwi_save_component_mapping($form, $form_state) {
 }
 
 /**
- * Retrieve islandora ingest mapping for a given webform component
+ * Retrieve islandora ingest mapping for a given webform component.
  *
  * @param int $webform_nid
  *   The node id of the webform
@@ -295,7 +340,7 @@ function iwi_get_saved_component_mapping($webform_nid, $cid) {
 }
 
 /**
- * Retrieve all islandora ingest mappings for a given webform
+ * Retrieve all islandora ingest mappings for a given webform.
  *
  * @param int $webform_nid
  *   the node id of the webform
@@ -329,6 +374,22 @@ function iwi_webform_content_model($webform_nid) {
     ->fields('iw', array('cmodel_filter'))
     ->condition('iw.entity_id', $webform_nid)
     ->execute()->fetchField();
+}
+
+/**
+ * Retrieve the ingest settings for a webform.
+ *
+ * @param int $webform_nid
+ *   the node id of the webform
+ *
+ * @return string
+ *   the cmodel filter value, or NULL
+ */
+function iwi_webform_ingest_settings($webform_nid) {
+  return db_select('islandora_webform_ingest_webforms', 'iw')
+    ->fields('iw', array('ingest_enabled', 'cmodel', 'relation', 'namespace'))
+    ->condition('iw.nid', $webform_nid)
+    ->execute()->fetch();
 }
 
 
@@ -518,4 +579,85 @@ function iwi_set_form_element_byhash(&$form, &$form_state, &$cloned_elements, $e
         $element->default_value = $input_value['#default_value'];
       }
   }
+}
+
+/**
+ * Write webform ingest configuration to database.
+ *
+ * @param array $form
+ *   The webform config form
+ * @param array $form_state
+ *   The webform config form_state
+ *
+ * @throws \Exception
+ */
+function iwi_save_webform_configuration($form, &$form_state) {
+
+  $nid = $form['nid']['#value'];
+  $enabled = !empty($form_state['values']['islandora_ingest']['ingest_enabled']) ? $form_state['values']['islandora_ingest']['ingest_enabled'] : 0;
+  $cmodel = !empty($form_state['values']['islandora_ingest']['cmodel']) ? $form_state['values']['islandora_ingest']['cmodel'] : '';
+  $relation = !empty($form_state['values']['islandora_ingest']['relation']) ? $form_state['values']['islandora_ingest']['relation'] : 'child';
+  $namespace = !empty($form_state['values']['islandora_ingest']['namespace']) ? $form_state['values']['islandora_ingest']['namespace'] : 'islandora';
+  if ($old_settings = db_select('islandora_webform_ingest_webforms', 'm')
+    ->fields('m')
+    ->condition('m.nid', $nid)
+    ->execute()->fetch()
+  ) {
+    if ($old_settings->cmodel != $cmodel) {
+      // Content model is changing, wipe out ingest mappings.
+      db_delete('islandora_webform_ingest_map')->condition('nid', $nid)->execute();
+      drupal_set_message(t('The destination content model was changed and therefore all existing component ingest mappings for this webform were deleted. You will have to edit each webform component that you wish to ingest.'), 'warning');
+    }
+    db_update('islandora_webform_ingest_webforms')
+      ->fields(array(
+        'ingest_enabled' => $enabled,
+        'cmodel' => $cmodel,
+        'relation' => $relation,
+        'namespace' => $namespace,
+      ))
+      ->condition('id', $old_settings->id)
+      ->execute();
+  }
+  else {
+    db_insert('islandora_webform_ingest_webforms')
+      ->fields(array(
+        'nid' => $nid,
+        'ingest_enabled' => $enabled,
+        'cmodel' => $cmodel,
+        'relation' => $relation,
+        'namespace' => $namespace,
+      ))
+      ->execute();
+  }
+}
+
+/**
+ * Utility function returns mime types given file extensions.
+ *
+ * @param string|array $extensions
+ *   a single file extension as a string, or multiple file extensions
+ *   as an array.
+ *
+ * @return string|array
+ *   mime type(s), defaults to 'application/octet-stream'
+ */
+function iwi_get_mimetypes_from_extensions($extensions) {
+  module_load_include('inc', 'content', 'includes/file.mimetypes');
+  $mapping = file_mimetype_mapping();
+  $mode = is_array($extensions) ? 'array' : 'string';
+  $extensions = (array) $extensions;
+  $mimetypes = array();
+  foreach ($extensions as $extension) {
+    // Islandora doesn't use the standard jpeg mime type.
+    if ($extension == 'jpg') {
+      $mimetypes[] = 'image/jpg';
+    }
+    elseif (isset($mapping['extensions'][$extension])) {
+      $mimetypes[] = $mapping['mimetypes'][$mapping['extensions'][$extension]];
+    }
+  }
+  if (!count($mimetypes)) {
+    $mimetypes[] = 'application/octet-stream';
+  }
+  return $mode == 'array' ? $mimetypes : reset($mimetypes);
 }

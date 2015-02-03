@@ -23,18 +23,64 @@ function iwi_preview_ingest_submission_form($form, &$form_state, $sid) {
   drupal_add_css(drupal_get_path('module', 'islandora_webform_ingest') . '/css/islandora_webform_ingest.css');
   form_load_include($form_state, 'inc', 'islandora_webform_ingest', '/includes/ingest_page');
   form_load_include($form_state, 'inc', 'islandora', '/includes/ingest.form');
+  form_load_include($form_state, 'inc', 'islandora', '/includes/utilities');
   // Get the submission data.
   $submission = array_shift(webform_get_submissions(array('sid' => $sid)));
-  $object = $submission->islandora_object;
-  $webform = node_load($submission->nid);
+  // Get the webform ingest configuration.
+  $iwi_settings = iwi_webform_ingest_settings($submission->nid);
   // Get the submission component mappings.
   $mappings = iwi_get_saved_component_mappings($submission->nid);
+  if (!count($mappings)) {
+    return $form;
+  }
+
+
+  // If cmodel is defined in the webform ingest settings, we want to create
+  // a new object related to the original object.
+  if ($iwi_settings->cmodel) {
+    if ($iwi_settings->namespace && $iwi_settings->relation) {
+      // Setting $object to NULL causes a new object of this cmodel
+      // to be created from scratch.
+      $object = NULL;
+      $ingest_content_model = islandora_object_load($iwi_settings->cmodel);
+    }
+    else {
+      // We shouldn't ever see this condition, but just in case...
+      $url = 'node/' . $submission->nid . '/webform/islandora';
+      drupal_set_message(t('Invalid webform ingestion settings for creating a new object. Please check your settings at !link', array('!link' => l($url, $url))), 'error');
+      return $form;
+    }
+  }
+  // If cmodel is not defined in the webform ingest settings, we are modifying
+  // the original object.
+  else {
+    $object = $submission->islandora_object;
+    $ingest_content_model = islandora_object_load(iwi_webform_content_model($submission->nid));
+  }
+
+
+  $webform = node_load($submission->nid);
 
   // Get the content model datastreams.
-  $datastreams = iwi_ingestable_datastreams(islandora_object_load(iwi_webform_content_model($submission->nid)), iwi_ingestable_mimetypes());
+  // It's ok to use NULL mimetype filter because our mappings below
+  // control which datastreams we will actually show.
+  $datastreams = iwi_ingestible_datastreams($ingest_content_model, NULL);
+
+  // Get row label for submission summary.
+  if ($object) {
+    $submission_object_text = l($object->label, 'islandora/object/' . $object->id);
+  }
+  else {
+    $submission_object_text = t('New @cmodel object related by @relation to "@object"',
+      array(
+        '@cmodel' => $ingest_content_model->label,
+        '@relation' => $iwi_settings->relation,
+        '@object' => $submission->islandora_object->label,
+      ));
+  }
 
   $submission_info = array(
-    l($object->label, 'islandora/object/' . $object->id),
+    $submission_object_text,
     l($webform->title, 'node/' . $webform->nid),
     l($submission->is_draft ? t('@sid (draft)', array('@sid' => $sid)) : $sid, "node/$webform->nid/submission/$sid"),
     format_date($submission->submitted, 'short'),
@@ -61,7 +107,6 @@ function iwi_preview_ingest_submission_form($form, &$form_state, $sid) {
     ),
     'submission' => webform_submission_render($webform, $submission, NULL, NULL),
   );
-  $form_state['object'] = $object;
   $form_state['datastreams'] = $datastreams;
   $islandora_webform_values = array();
 
@@ -187,8 +232,10 @@ function iwi_preview_ingest_submission_form($form, &$form_state, $sid) {
     '#weight' => 100,
   );
 
+  // Store some stuff for submit callback.
   $form['#submission'] = $submission;
-
+  $form['#iwi_settings'] = $iwi_settings;
+  $form['#ingest_cmodel'] = $ingest_content_model;
   return $form;
 
 }
@@ -202,9 +249,23 @@ function iwi_preview_ingest_submission_form($form, &$form_state, $sid) {
  *   the form_state
  */
 function iwi_ingest_page_form_submit($form, &$form_state) {
-  if (!empty($form_state['datastreams']) && !empty($form_state['object'])) {
-
-    $object = $form_state['object'];
+  if (!empty($form_state['datastreams']) && !empty($form['#submission']->islandora_object)) {
+    $new_object = ($form['#iwi_settings']->cmodel) ? TRUE : FALSE;
+    // Keep track of datastream count to avoid ingesting an empty object
+    // to the repo.
+    $datastream_count = 0;
+    if ($new_object) {
+      $new_pid = $form['#submission']->islandora_object->repository->getNextIdentifier($form['#iwi_settings']->namespace, variable_get('islandora_basic_collection_generate_uuid', FALSE));
+      $relationships = array('relationship' => $form['#iwi_settings']->relation, 'pid' => $form['#submission']->islandora_object->id);
+      $label = "New Object";
+      $object = islandora_prepare_new_object($new_pid, $label, array(), array($form['#iwi_settings']->cmodel), array($relationships));
+      // Don't add the Object to the REPO yet, let's do this at the end, if
+      // $datastream_count > 0
+    }
+    else {
+      // Reload object to avoid MD5 checksum problems.
+      $object = islandora_object_load($form['#submission']->islandora_object->id);
+    }
 
     foreach ($form_state['datastreams'] as $association) {
       $dsid = $association['dsid'];
@@ -229,9 +290,6 @@ function iwi_ingest_page_form_submit($form, &$form_state) {
           // Process the form.
           $document = $xml_form->submit($sub_form, $new_form_state);
 
-          // Enable to preview the XML after the submission was done...
-          // dpm(dom_document_pretty_print($document->document));
-
           // Get updated object label.
           $label = NULL;
           if (is_array($association['title_field'])) {
@@ -240,25 +298,36 @@ function iwi_ingest_page_form_submit($form, &$form_state) {
           }
 
           // Update the islandora object with this datastream.
-          xml_form_builder_update_object($object, $association, $document, $label);
+          // xml_form_builder_update_object returns
+          // (array($association['dsid'] => $created, 'DC' => $created_dc);)
+          $created = xml_form_builder_update_object($object, $association, $document, $label);
+          if ($created[$dsid]) {
+            $datastream_count++;
+          }
+          if ($created['DC']) {
+            $datastream_count++;
+          }
         }
         // Done handling form-based datastream.
 
         // Handle other datastream mimetypes.
         else {
-          // Get the datastream object that we'll be ingesting into.
-          // Create it if not preexisting.
-          $new_datastream = isset($object[$dsid]) ? FALSE : TRUE;
-          $datastream = $new_datastream ? $object[$dsid] : $object->constructDatastream($dsid);
           $value_type = gettype($form_state['values'][$dsid]);
-
           // Handle text datastreams.
-          $text_value_types = array('integer', 'double', 'double');
+          $text_value_types = array('integer', 'double', 'string');
           if ($association['mime'] == 'text/plain' && in_array($value_type, $text_value_types)) {
+            // Get the datastream object that we'll be ingesting into.
+            // Create it if not preexisting.
+            if (empty($object[$dsid])) {
+              $datastream = $object->constructDatastream($dsid, 'M');
+              $object->ingestDatastream($datastream);
+            }
+            else {
+              $datastream = $object[$dsid];
+            }
             $datastream->content = $form_state['values'][$dsid];
-            $object->ingestDatastream($datastream);
+            $datastream_count++;
           }
-
           // Handle file ingestion.
           elseif (!empty($form_state['values'][$dsid]['fid'])) {
             // Handle file.
@@ -269,27 +338,59 @@ function iwi_ingest_page_form_submit($form, &$form_state) {
               $ext = pathinfo($file->filename, PATHINFO_EXTENSION);
               // If extension is valid for this datastream, go ahead and ingest.
               if (in_array($ext, $extensions)) {
+                if (empty($object[$dsid])) {
+                  $datastream = $object->constructDatastream($dsid, 'M');
+                  $object->ingestDatastream($datastream);
+                }
+                else {
+                  $datastream = $object[$dsid];
+                }
                 $datastream->label = $file->filename;
+                $datastream->mimetype = $file->filemime;
                 $file_path = drupal_realpath($file->uri);
-                $datastream->setContentFromFile($file_path, FALSE);
-                $object->ingestDatastream($datastream);
+                $datastream->setContentFromFile($file_path);
+                // Assuming for now everything wen't fine.
+                $datastream_count++;
               }
             }
             else {
               drupal_set_message(t('%type is not a supported file type for ingest to %dsid', array(
                 '%type' => $ext,
-                '%dsid' => $dsid
+                '%dsid' => $dsid,
               ), 'error'));
             }
           }
-
           // Respond to invalid types.
           else {
-            drupal_set_message(t('%mime is not a supported mime type for ingest', array('%mime' => $association['mime']), 'error'));
+            drupal_set_message(t('%mime is not a supported mime type for ingest', array('%mime' => $association['mime'])), 'error');
           }
         }
       }
     }
+
+    $url = 'islandora/object/' . $object->id;
+    $link = l($url, $url);
+    if (($new_object) && ($datastream_count > 0)) {
+      // Finally, add the Object to the repo.
+      islandora_add_object($object);
+
+      // Report new object created.
+      drupal_set_message(t('New @cmodel object with PID @pid was ingested: !link', array(
+        '@cmodel' => $form['#ingest_cmodel']->label,
+        '@pid' => $object->id,
+        '!link' => $link,
+        )));
+    }
+    else {
+      // Report original object modified.
+      drupal_set_message(t('@cmodel object with PID @pid was updated: !link', array(
+        '@cmodel' => $form['#ingest_cmodel']->label,
+        '@pid' => $object->id,
+        '!link' => $link,
+      )));
+    }
+
+    // Save a record of this ingestion.
     iwi_record_ingested($form['#submission'], $object);
   }
 }
@@ -299,19 +400,25 @@ function iwi_ingest_page_form_submit($form, &$form_state) {
  *
  * @param object $submission
  *   A webform submission object
- * @param IslandoraFedoraObject $object
+ * @param mixed $object
  *   The repository object
  *
  * @throws Exception
  */
-function iwi_record_ingested($submission, IslandoraFedoraObject $object) {
-  $fields = array(
-    'nid' => $submission->nid,
-    'sid' => $submission->sid,
-    'pid' => $object->id,
-    'date' => REQUEST_TIME,
-    'data' => serialize($submission->data),
-  );
+function iwi_record_ingested($submission, $object) {
+  if (in_array(get_class($object), array('IslandoraNewFedoraObject', 'IslandoraFedoraObject'))) {
+    $fields = array(
+      'nid' => $submission->nid,
+      'sid' => $submission->sid,
+      'pid' => $object->id,
+      'date' => REQUEST_TIME,
+      'data' => serialize($submission->data),
+    );
 
-  db_insert('islandora_webform_ingestions')->fields($fields)->execute();
+    db_insert('islandora_webform_ingestions')->fields($fields)->execute();
+
+  }
+  else {
+    watchdog('islandora_webform_ingest', 'Could not record object ingestion because second argument was not correct class', array(), WATCHDOG_ERROR);
+  }
 }
